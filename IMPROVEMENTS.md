@@ -200,6 +200,23 @@ python main.py \
   --sp-max-new-tokens 150
 ```
 
+### **Soft Prompts with Trained Projector** (experimental)
+```bash
+# First run: train projector
+python main.py \
+  --text "Your question" \
+  --use-ensemble \
+  --use-decomposition \
+  --use-reranking \
+  --train-projector \
+  --device cuda
+
+# Subsequent runs: uses trained projector automatically
+python main.py \
+  --text "Another question" \
+  --device cuda
+```
+
 ---
 
 ## 📊 Risultati Attesi

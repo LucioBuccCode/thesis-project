@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--use-reranking", action="store_true", help="Use cross-encoder for entity linking")
     parser.add_argument("--use-verbalization", action="store_true", help="Use graph verbalization instead of soft prompts")
     parser.add_argument("--use-instruction-model", action="store_true", help="Use Flan-T5 instead of GPT-2")
+    parser.add_argument("--train-projector", action="store_true", help="Train soft prompt projector before generation")
 
 
     args = parser.parse_args()
@@ -103,12 +104,52 @@ def main():
         json.dump(meta, f, ensure_ascii=False, indent=2)
     print("[done] Saved enriched graph embeddings in outputs/")
 
+    # [3.5] Train projector if requested and not using verbalization
+    if args.train_projector and not args.use_verbalization:
+        print("\n[3.5/4] Training soft prompt projector...")
+        from train_projector import ContrastiveProjectorTrainer, create_training_data_from_graph
 
-    print("Done. Check the 'outputs' folder.")
+        try:
+            # Create training data from graph embeddings
+            train_data = create_training_data_from_graph(
+                entity_emb_path="outputs/graph_entity_embs.pt",
+                wd_emb_path="outputs/graph_wikidata_embs.pt",
+                triples_path="outputs/triples_expanded.json",
+                llm_name=args.llm,
+                device=args.device,
+                num_negatives=3
+            )
+
+            # Get dimensions from first sample
+            d_graph = train_data[0][0].shape[0]
+            d_llm = train_data[0][1].shape[0]
+
+            print(f"  - Training data: {len(train_data)} pairs")
+            print(f"  - Graph dim: {d_graph}, LLM dim: {d_llm}")
+
+            # Initialize and train projector
+            trainer = ContrastiveProjectorTrainer(
+                d_graph=d_graph,
+                d_llm=d_llm,
+                device=args.device,
+                temperature=0.07
+            )
+
+            trainer.train(train_data, epochs=20, lr=1e-3, batch_size=16)
+            trainer.save("outputs/trained_projector.pt")
+
+            print("  ✓ Projector trained and saved")
+
+        except Exception as e:
+            print(f"  [ERROR] Projector training failed: {e}")
+            print("  [WARN] Continuing with random projector")
+    elif args.train_projector and args.use_verbalization:
+        print("\n[INFO] --train-projector ignored (using verbalization mode)")
 
     print("\n[4/4] Soft prompting: confronto baseline vs graph-augmented")
     print(f"  - Verbalization: {args.use_verbalization}")
     print(f"  - Instruction Model: {args.use_instruction_model}")
+    print(f"  - Trained Projector: {args.train_projector and not args.use_verbalization}")
 
     baseline, enriched, retrieved = run_soft_prompting(
         text=args.text,              # <-- la tua domanda

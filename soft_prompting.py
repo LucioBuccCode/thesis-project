@@ -378,7 +378,23 @@ def run_soft_prompting(text: str,
             tok.pad_token = tok.eos_token
         model = AutoModelForCausalLM.from_pretrained(llm_name).to(dev)
         hidden_size = model.get_input_embeddings().weight.shape[1]
+
+        # Initialize projector
         projector = SoftPromptProjector(d_src=bank.shape[1], d_tgt=hidden_size).to(dev)
+
+        # Try to load trained projector if exists
+        trained_projector_path = "outputs/trained_projector.pt"
+        if os.path.exists(trained_projector_path):
+            try:
+                projector.load_state_dict(torch.load(trained_projector_path, map_location=dev))
+                print(f"[INFO] Loaded trained projector from {trained_projector_path}")
+            except Exception as e:
+                print(f"[WARN] Could not load trained projector: {e}")
+                print("[WARN] Using random initialized projector")
+        else:
+            print(f"[WARN] No trained projector found at {trained_projector_path}")
+            print("[WARN] Using random initialized projector (consider running with --train-projector)")
+
         soft_embeds = build_soft_prompt_vectors(retrieved, projector, device=str(dev))
 
         # Genera
