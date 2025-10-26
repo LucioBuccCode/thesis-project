@@ -205,22 +205,42 @@ def build_llm_prompt_with_graph(
     Returns:
         Formatted prompt
     """
-    if use_cot:
-        prompt = f"""You are a helpful AI assistant. Use the provided knowledge graph facts to answer the question.
+    prompt = f"""
+        You are a precise answer extraction system. You will receive context sentences and a complex multi-hop question that requires connecting information from multiple sources.
 
-{graph_facts}
+        ## Critical Instructions:
 
-Question: {question}
+        1. **Analyze Carefully**: The question is multi-hop, meaning you MUST connect information from multiple sentences and/or your knowledge base to find the answer.
 
-Let's think step by step to find the answer:
-Answer:"""
-    else:
-        prompt = f"""Use the following facts to answer the question.
+        2. **Information Sources**:
+        - PRIMARY: Use the provided sentences as supporting evidence
+        - SECONDARY: Leverage your own knowledge to fill gaps or enhance understanding
+        - The sentences should guide and support your reasoning, but you're not limited to only their content
+        - Combine both sources intelligently to reach the most accurate answer
 
-{graph_facts}
+        3. **Chain Information**: 
+        - Identify relevant facts from the provided sentences
+        - Connect these with your broader knowledge
+        - Trace the reasoning path from question to answer
+        - Use the sentences to validate or refine your knowledge-based answer
 
-Question: {question}
-Answer:"""
+        4. **Answer Format**:
+        - Respond with ONLY 2-3 words maximum
+        - Use the most specific and direct answer possible
+        - No explanations, no additional text
+        - Just the precise answer entity/phrase
+
+        5. **Accuracy Rules**:
+        - Prioritize information from provided sentences when available
+        - Use your knowledge to interpret, connect, and complete the information
+
+        ## Context Sentences:
+        {graph_facts}
+
+        ## Question:
+        {question}
+
+        ## Answer (Ultra-concise responses, No verbose explanations, Direct, precise answers only, Focus on multi-hop reasoning ):"""
 
     return prompt
 
@@ -267,7 +287,10 @@ def run_soft_prompting(text: str,
                        wd_emb_path="outputs/graph_wikidata_embs.pt",
                        triples_path="outputs/triples_expanded.json",
                        use_verbalization: bool = True,
-                       use_instruction_model: bool = False):
+                       use_instruction_model: bool = False,
+                       use_smart_verbalization: bool = False,
+                       expansion_depth: int = 1,
+                       use_path_retrieval: bool = False):
     """
     Enhanced soft prompting with graph verbalization option.
 
@@ -322,12 +345,65 @@ def run_soft_prompting(text: str,
             if label:
                 qid_to_label[qid] = label
 
-        # Verbalize facts
-        graph_facts = verbalize_with_labels(all_triples, qid_to_label, max_facts=20)
+        # NEW: Path-based retrieval for better fact selection
+        if use_path_retrieval:
+            print("[INFO] Using PATH-BASED RETRIEVAL (experimental)")
+            from smart_retrieval import smart_retrieve_and_rank, create_path_aware_prompt
 
-        # Build prompts
-        prompt_baseline = f"Question: {text}\nAnswer:"
-        prompt_enriched = build_llm_prompt_with_graph(text, graph_facts, use_cot=True)
+            # Extract entity names from triples
+            entity_names = list(set([t["head"] for t in all_triples if t.get("source") == "text"] +
+                                   [t["tail"] for t in all_triples if t.get("source") == "text"]))
+
+            # Smart retrieval using graph paths
+            relevant_facts, reasoning_paths = smart_retrieve_and_rank(
+                question=text,
+                all_triples=all_triples,
+                entity_names=entity_names,
+                qid_to_label=qid_to_label,
+                max_hops=expansion_depth,
+                max_paths=10,
+                max_facts=15
+            )
+
+            # Create path-aware prompt
+            prompt_baseline = f"Question: {text}\nAnswer:"
+            prompt_enriched = create_path_aware_prompt(
+                question=text,
+                facts=relevant_facts,
+                paths=reasoning_paths,
+                qid_to_label=qid_to_label,
+                max_paths_show=5
+            )
+            print(f"[DEBUG] Path-aware prompt:\n{prompt_enriched}\n")
+
+        # Verbalize facts - support smart verbalization
+        elif use_smart_verbalization:
+            print("[INFO] Using SMART VERBALIZATION with structured context")
+            from smart_verbalization import verbalize_graph_with_structure, create_llm_prompt_enhanced
+
+            graph_facts = verbalize_graph_with_structure(
+                triples=all_triples,
+                qid_to_label=qid_to_label,
+                question=text,
+                max_facts=30,
+                include_meta=True
+            )
+
+            # Build prompts with enhanced structure
+            prompt_baseline = f"Question: {text}\nAnswer:"
+            prompt_enriched = create_llm_prompt_enhanced(
+                question=text,
+                structured_facts=graph_facts,
+                expansion_depth=expansion_depth,
+                use_cot=True
+            )
+        else:
+            # Original verbalization
+            graph_facts = verbalize_with_labels(all_triples, qid_to_label, max_facts=20)
+            print(f"[INFO] Verbalized facts from graph\n{graph_facts}\n")
+            # Build prompts
+            prompt_baseline = f"Question: {text}\nAnswer:"
+            prompt_enriched = build_llm_prompt_with_graph(text, graph_facts, use_cot=True)
 
         # Load appropriate model
         if use_instruction_model:

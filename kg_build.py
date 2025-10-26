@@ -165,6 +165,10 @@ def build_enriched_hetero_graph(
         # enhanced entity linking:
         question_context: Optional[str] = None,
         use_reranking: bool = True,
+        # NEW: intelligent expansion:
+        use_smart_expansion: bool = False,
+        max_expansion_depth: int = 2,
+        max_total_qids: int = 100,
 ):
     """
     Costruisce un HeteroData con:
@@ -211,24 +215,63 @@ def build_enriched_hetero_graph(
         use_reranking=use_reranking
     )
 
-    # 3) espansione WD
+    # 3) espansione WD - NEW: support intelligent expansion
     qids = [row["qid"] for row in e2q.values() if row and row.get("qid")]
-    q_edges = expand_with_wikidata_qids(qids,
-                                        prop_keys=wd_props, prop_lang=wd_lang,
-                                        max_edges_per_qid=wd_max_edges_per_qid,
-                                        preferred_only=wd_preferred_only)
+
+    if use_smart_expansion and question_context:
+        print("[INFO] Using SMART EXPANSION with intent analysis")
+        from smart_expansion import smart_expand_with_context
+
+        expansion_result = smart_expand_with_context(
+            seed_qids=qids,
+            question=question_context,
+            triples=triples,
+            max_depth=max_expansion_depth,
+            max_total_qids=max_total_qids,
+            lang=wd_lang
+        )
+
+        q_edges = expansion_result.edges
+        qids_all_from_expansion = expansion_result.qids
+        qid_labels_from_expansion = expansion_result.qid_labels
+
+        print(f"[SMART EXPANSION] Discovered {len(qids_all_from_expansion)} QIDs, {len(q_edges)} edges")
+    else:
+        print("[INFO] Using standard expansion")
+        q_edges = expand_with_wikidata_qids(qids,
+                                            prop_keys=wd_props, prop_lang=wd_lang,
+                                            max_edges_per_qid=wd_max_edges_per_qid,
+                                            preferred_only=wd_preferred_only)
+        qids_all_from_expansion = None
+        qid_labels_from_expansion = None
 
     # 4) lista completa di QID (seed + expansion)
-    qids_all = sorted(set(qids + [h for (h,_,_) in q_edges] + [t for (_,_,t) in q_edges]))
+    if qids_all_from_expansion is not None:
+        qids_all = sorted(list(qids_all_from_expansion))
+    else:
+        qids_all = sorted(set(qids + [h for (h,_,_) in q_edges] + [t for (_,_,t) in q_edges]))
 
     # 5) feature nodi wikidata = embed(label + ' — ' + desc)
     if qids_all:
         qid2i = {q:i for i,q in enumerate(qids_all)}
         wd_texts = []
-        for q in qids_all:
-            lab, des = wd_get_label_desc(q, lang=wd_lang)
-            text = (lab + (" — " + des if des else "")).strip()
-            wd_texts.append(text if text else q)
+
+        # Use cached labels from smart expansion if available
+        if qid_labels_from_expansion:
+            for q in qids_all:
+                if q in qid_labels_from_expansion:
+                    lab = qid_labels_from_expansion[q]
+                    text = lab
+                else:
+                    lab, des = wd_get_label_desc(q, lang=wd_lang)
+                    text = (lab + (" — " + des if des else "")).strip()
+                wd_texts.append(text if text else q)
+        else:
+            for q in qids_all:
+                lab, des = wd_get_label_desc(q, lang=wd_lang)
+                text = (lab + (" — " + des if des else "")).strip()
+                wd_texts.append(text if text else q)
+
         wd_embs = _embed_texts(wd_texts, embed_model, device=device)
 
         # Validate wikidata embeddings

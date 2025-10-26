@@ -46,6 +46,13 @@ def main():
     parser.add_argument("--use-instruction-model", action="store_true", help="Use Flan-T5 instead of GPT-2")
     parser.add_argument("--train-projector", action="store_true", help="Train soft prompt projector before generation")
 
+    # NEWEST: Smart expansion and verbalization
+    parser.add_argument("--use-smart-expansion", action="store_true", help="Use intelligent multi-hop graph expansion with intent analysis")
+    parser.add_argument("--use-smart-verbalization", action="store_true", help="Use structured verbalization with semantic context")
+    parser.add_argument("--use-path-retrieval", action="store_true", help="Use path-based retrieval instead of cosine similarity (experimental, best results)")
+    parser.add_argument("--max-expansion-depth", type=int, default=2, help="Maximum depth for graph expansion (1-3)")
+    parser.add_argument("--max-total-qids", type=int, default=100, help="Maximum total QIDs to discover during expansion")
+
 
     args = parser.parse_args()
 
@@ -69,6 +76,7 @@ def main():
 
     print(f"[2/4] Costruisci grafo arricchito con Wikidata...")
     print(f"  - Reranking: {args.use_reranking}")
+    print(f"  - Smart Expansion: {args.use_smart_expansion}")
 
     # [2] Costruisci grafo arricchito con Wikidata
     data, meta = build_enriched_hetero_graph(
@@ -81,6 +89,10 @@ def main():
         wd_preferred_only=getattr(args, "wd_preferred_rank_only", False),
         question_context=args.text,
         use_reranking=args.use_reranking,
+        # NEW: Smart expansion
+        use_smart_expansion=args.use_smart_expansion,
+        max_expansion_depth=args.max_expansion_depth,
+        max_total_qids=args.max_total_qids,
     )
     print(f"[graph] entity={meta['entity_count']} | wikidata={meta['wikidata_count']}")
 
@@ -148,6 +160,8 @@ def main():
 
     print("\n[4/4] Soft prompting: confronto baseline vs graph-augmented")
     print(f"  - Verbalization: {args.use_verbalization}")
+    print(f"  - Smart Verbalization: {args.use_smart_verbalization}")
+    print(f"  - Path Retrieval: {args.use_path_retrieval}")
     print(f"  - Instruction Model: {args.use_instruction_model}")
     print(f"  - Trained Projector: {args.train_projector and not args.use_verbalization}")
 
@@ -161,7 +175,11 @@ def main():
         mix_wd=args.sp_mix_wd,
         max_new_tokens=args.sp_max_new_tokens,
         use_verbalization=args.use_verbalization,
-        use_instruction_model=args.use_instruction_model
+        use_instruction_model=args.use_instruction_model,
+        # NEW: Smart verbalization and path retrieval
+        use_smart_verbalization=args.use_smart_verbalization,
+        expansion_depth=args.max_expansion_depth,
+        use_path_retrieval=args.use_path_retrieval
     )
 
     print("\n=== Baseline (solo domanda) ===")
