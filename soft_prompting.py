@@ -149,22 +149,72 @@ def verbalize_graph_facts(
 def verbalize_with_labels(
     triples: List[Dict],
     qid_to_label: Optional[Dict[str, str]] = None,
-    max_facts: int = 20
+    max_facts: int = 20,
+    retrieved_nodes: Optional[List[Tuple[str, str, float]]] = None
 ) -> str:
     """
     Enhanced verbalization that replaces QIDs with human-readable labels.
+    Prioritizes facts involving retrieved nodes for better relevance.
 
     Args:
         triples: List of triples
         qid_to_label: Mapping from QID to label (e.g., Q76 -> Barack Obama)
         max_facts: Maximum facts
+        retrieved_nodes: Retrieved nodes for prioritization [(label, type, score)]
 
     Returns:
         Readable fact string
     """
-    facts = []
+    # Build set of relevant entities from retrieved nodes
+    relevant_entities = set()
+    if retrieved_nodes:
+        for label, ntype, _ in retrieved_nodes:
+            if ntype == "entity":
+                entity_name = label.replace("ENTITY::", "")
+                relevant_entities.add(entity_name.lower())
+            elif ntype == "wikidata":
+                qid = label.replace("WIKIDATA::", "")
+                relevant_entities.add(qid.lower())
+                # Also add label if available
+                if qid_to_label and qid in qid_to_label:
+                    relevant_entities.add(qid_to_label[qid].lower())
 
-    for t in triples[:max_facts]:
+    # Score and sort triples by relevance
+    scored_triples = []
+    for t in triples:
+        head = t["head"]
+        tail = t["tail"]
+        rel = t["relation"]
+
+        # Calculate relevance score
+        score = 0
+        head_lower = head.lower()
+        tail_lower = tail.lower()
+
+        # Check if entities are in retrieved nodes
+        if relevant_entities:
+            if head_lower in relevant_entities or any(re in head_lower for re in relevant_entities):
+                score += 2
+            if tail_lower in relevant_entities or any(re in tail_lower for re in relevant_entities):
+                score += 2
+
+        # Boost Wikidata facts (more reliable)
+        if t.get("source") == "wikidata":
+            score += 1
+
+        # Boost important relations
+        important_rels = ["country", "capital", "president", "location", "border", "citizen", "birth", "spouse"]
+        if any(imp in rel.lower() for imp in important_rels):
+            score += 1
+
+        scored_triples.append((score, t))
+
+    # Sort by score (descending) and take top-K
+    scored_triples.sort(key=lambda x: x[0], reverse=True)
+    top_triples = [t for _, t in scored_triples[:max_facts]]
+
+    facts = []
+    for t in top_triples:
         head = t["head"]
         tail = t["tail"]
         rel = t["relation"]
@@ -186,7 +236,7 @@ def verbalize_with_labels(
 
         facts.append(f"{head} {rel_label} {tail}")
 
-    return "\n".join([f"- {f}" for f in facts])
+    return "\n".join([f"- {f}" for f in facts]) if facts else "No relevant facts found."
 
 
 def build_llm_prompt_with_graph(
@@ -196,6 +246,7 @@ def build_llm_prompt_with_graph(
 ) -> str:
     """
     Build a structured prompt combining question and graph facts.
+    Optimized for multi-hop reasoning.
 
     Args:
         question: The input question
@@ -206,20 +257,35 @@ def build_llm_prompt_with_graph(
         Formatted prompt
     """
     if use_cot:
-        prompt = f"""You are a helpful AI assistant. Use the provided knowledge graph facts to answer the question.
+        prompt = f"""You are an expert at answering complex questions using knowledge graphs.
 
+Knowledge Graph Facts:
 {graph_facts}
 
 Question: {question}
 
-Let's think step by step to find the answer:
+Instructions:
+1. Read the question carefully and identify what information is needed
+2. Look through the knowledge graph facts for relevant information
+3. Connect multiple facts if needed to answer the question
+4. Provide a concise, direct answer
+
+Think step-by-step:
+1. What is being asked?
+2. Which facts are relevant?
+3. How do these facts connect?
+4. What is the final answer?
+
 Answer:"""
     else:
-        prompt = f"""Use the following facts to answer the question.
+        prompt = f"""Answer the question using only the knowledge graph facts below.
 
+Knowledge Graph Facts:
 {graph_facts}
 
 Question: {question}
+
+Provide a concise, direct answer:
 Answer:"""
 
     return prompt
@@ -314,16 +380,22 @@ def run_soft_prompting(text: str,
         # ===== VERBALIZATION APPROACH (Recommended) =====
         print("[INFO] Using graph verbalization approach")
 
-        # Build QID to label mapping
+        # Build QID to label mapping (batch to reduce API calls)
         qid_to_label = {}
+        print(f"[INFO] Fetching labels for {len(qids)} QIDs...")
         for qid in qids:
             from wikidata_utils import wd_get_label_desc
             label, _ = wd_get_label_desc(qid, "en")
             if label:
                 qid_to_label[qid] = label
 
-        # Verbalize facts
-        graph_facts = verbalize_with_labels(all_triples, qid_to_label, max_facts=20)
+        # Verbalize facts with retrieved nodes for prioritization
+        graph_facts = verbalize_with_labels(
+            all_triples,
+            qid_to_label,
+            max_facts=max_new_tokens // 5,  # Scale facts with token budget
+            retrieved_nodes=retrieved_view
+        )
 
         # Build prompts
         prompt_baseline = f"Question: {text}\nAnswer:"

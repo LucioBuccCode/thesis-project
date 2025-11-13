@@ -111,34 +111,121 @@ def _parse_rebel_output(text: str) -> List[Dict[str, str]]:
 
 def decompose_question(text: str) -> List[str]:
     """
-    Decompose complex multihop questions into simpler sub-questions.
-    Uses heuristics to identify question structure.
+    Enhanced question decomposition for complex multihop questions.
+    Extracts sub-questions targeting intermediate entities and relations.
     """
     sub_questions = [text]  # Always include original
+    text_lower = text.lower()
 
-    # Pattern: "Who is the X of the Y that Z?"
+    # Pattern 1: "Who is the X of the Y that Z?"
     # Example: "Who is the spouse of the president born in Hawaii?"
     pattern1 = r"who\s+is\s+the\s+(\w+)\s+of\s+the\s+(\w+)\s+(.*?)[\?]?"
-    match1 = re.search(pattern1, text.lower())
+    match1 = re.search(pattern1, text_lower)
     if match1:
         relation1 = match1.group(1)
         entity_type = match1.group(2)
         constraint = match1.group(3)
 
-        # Sub-question 1: Focus on the constraint
+        # Focus on finding the intermediate entity
         if constraint:
             sub_questions.append(f"What {entity_type} {constraint}?")
+            sub_questions.append(f"Who {constraint}?")
 
-        # Sub-question 2: Focus on the main entity
+        # Focus on the final relation
         sub_questions.append(f"Who is the {entity_type}?")
+        sub_questions.append(f"{entity_type} has {relation1}")
 
-    # Pattern: "Where/When did X do Y?"
-    pattern2 = r"(where|when)\s+(?:did|was|is)\s+(.*?)\s+(born|founded|created|located)"
-    match2 = re.search(pattern2, text.lower())
+    # Pattern 2: "When did the X that Y do Z?"
+    # Example: "When did the team that led by Giuseppe Marotta win the champions league?"
+    pattern2 = r"(when|where)\s+did\s+the\s+(\w+)\s+that\s+(.*?)\s+(win|achieve|do|get)\s+(.*?)[\?]?"
+    match2 = re.search(pattern2, text_lower)
     if match2:
-        sub_questions.append(f"Who is {match2.group(2)}?")
+        wh = match2.group(1)
+        entity_type = match2.group(2)
+        constraint = match2.group(3)
+        action = match2.group(4)
+        obj = match2.group(5)
 
-    return sub_questions
+        # Find the entity satisfying constraint
+        sub_questions.append(f"What {entity_type} {constraint}?")
+        sub_questions.append(f"Which {entity_type} {constraint}?")
+        # Find when/where action happened
+        sub_questions.append(f"{wh} did {action} {obj}?")
+        # Extract relation from constraint
+        sub_questions.append(f"{entity_type} {constraint}")
+
+    # Pattern 3: "Which X has Y and is Z?"
+    # Example: "Which country has Mohamed Morsi in a government post and is the location of the Giza Pyramids?"
+    pattern3 = r"which\s+(\w+)\s+(.*?)\s+and\s+(.*?)[\?]?"
+    match3 = re.search(pattern3, text_lower)
+    if match3:
+        entity_type = match3.group(1)
+        constraint1 = match3.group(2)
+        constraint2 = match3.group(3)
+
+        # Split into two simpler questions
+        sub_questions.append(f"Which {entity_type} {constraint1}?")
+        sub_questions.append(f"Which {entity_type} {constraint2}?")
+        # Extract key entities
+        sub_questions.append(f"{entity_type} {constraint1}")
+        sub_questions.append(f"{entity_type} {constraint2}")
+
+    # Pattern 4: "The X that contains Y had what Z?"
+    # Example: "The country that contains Balochistan, Pakistan had what President in 1980?"
+    pattern4 = r"the\s+(\w+)\s+that\s+(contains|includes|has)\s+(.*?)\s+(?:had|has)\s+what\s+(\w+)"
+    match4 = re.search(pattern4, text_lower)
+    if match4:
+        entity_type = match4.group(1)
+        relation = match4.group(2)
+        obj = match4.group(3)
+        target = match4.group(4)
+
+        # Find entity containing object
+        sub_questions.append(f"Which {entity_type} {relation} {obj}?")
+        sub_questions.append(f"What {entity_type} has {obj}?")
+        # Find the target relation
+        sub_questions.append(f"{entity_type} has {target}")
+        sub_questions.append(f"What is the {target}?")
+
+    # Pattern 5: "Which X whose Y is Z borders/relates to W?"
+    # Example: "Which country whose religious organization is led by the Ukrainian Orthodox Church borders Slovakia?"
+    pattern5 = r"which\s+(\w+)\s+whose\s+(.*?)\s+is\s+(.*?)\s+(borders|relates|connects)\s+(.*?)[\?]?"
+    match5 = re.search(pattern5, text_lower)
+    if match5:
+        entity_type = match5.group(1)
+        property_path = match5.group(2)
+        property_value = match5.group(3)
+        relation = match5.group(4)
+        target = match5.group(5)
+
+        # Find entity with property
+        sub_questions.append(f"Which {entity_type} {property_path} {property_value}?")
+        # Find entities related to target
+        sub_questions.append(f"Which {entity_type} {relation} {target}?")
+        # Extract property and target separately
+        sub_questions.append(f"{property_path} is {property_value}")
+        sub_questions.append(f"{entity_type} {relation} {target}")
+
+    # Pattern 6: Extract named entities directly
+    # Find capitalized phrases (likely named entities)
+    import re
+    capitalized = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
+    for entity in capitalized:
+        if len(entity.split()) >= 2:  # Multi-word entities
+            sub_questions.append(f"What is {entity}?")
+            sub_questions.append(f"{entity}")
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_questions = []
+    for q in sub_questions:
+        q_lower = q.lower().strip()
+        if q_lower not in seen:
+            seen.add(q_lower)
+            unique_questions.append(q)
+
+    print(f"[INFO] Decomposed question into {len(unique_questions)} variants")
+    return unique_questions
 
 def _extract_with_rebel(text: str, device: str = "cpu") -> List[Dict[str, str]]:
     """Extract triples using REBEL model."""
