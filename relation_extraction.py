@@ -208,7 +208,6 @@ def decompose_question(text: str) -> List[str]:
 
     # Pattern 6: Extract named entities directly
     # Find capitalized phrases (likely named entities)
-    import re
     capitalized = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b', text)
     for entity in capitalized:
         if len(entity.split()) >= 2:  # Multi-word entities

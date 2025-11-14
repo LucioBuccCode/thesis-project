@@ -17,7 +17,8 @@ from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass, asdict
 import torch
 from pathlib import Path
-
+from hgt_reasoning_integration import HGTReasoningIntegrator
+from soft_prompting_enhanced import run_soft_prompting_enhanced
 
 @dataclass
 class PipelineConfig:
@@ -378,12 +379,33 @@ class QAPipeline:
         # Step 3: Train HGT (unless skipped)
         if not skip_hgt_training:
             embeddings = self.train_hgt(graph_data)
+            # Nuovo step 3.5
+            hgt_reasoner = HGTReasoningIntegrator(device=self.config.device)
+            relevant_info = hgt_reasoner.extract_relevant_knowledge(
+                hgt_embeddings=embeddings,
+                question=question,
+                triples=triples,
+                graph_data=graph_data,
+                metadata=meta
+            )
         else:
             print("[INFO] Skipping HGT training (using existing embeddings)")
 
-        # Step 4: Generate answer
-        baseline, enriched, retrieved = self.generate_answer(question)
+        
 
+        # Step 4: Generate answer
+        #baseline, enriched, retrieved = self.generate_answer(question)
+        baseline, enriched, retrieved = run_soft_prompting_enhanced(
+            question,
+            embeddings,
+            triples,
+            meta.get("qid2label", {}),
+            relevant_info=relevant_info,  # NUOVO: passa info da HGT
+            use_verbalization=True,
+            use_instruction_model=True,
+            use_hgt_reasoning=True,  # NUOVO: abilita HGT reasoning
+            device=self.config.device
+        )
         elapsed = time.time() - start_time
 
         result = {

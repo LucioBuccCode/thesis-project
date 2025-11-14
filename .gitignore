@@ -209,3 +209,5 @@ __marimo__/
 
 #output folder
 outputs/
+dev_simple.json
+results.csv
