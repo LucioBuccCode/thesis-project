@@ -85,12 +85,12 @@ def run_qa_pipeline(question: str) -> Tuple[str, str]:
         return "", ""
 
 
-def test_and_save_csv(input_file: str, output_csv: str, max_questions: int = 50):
+def test_and_save_csv(input_file: str, output_csv: str, from_row :int, to_row: int = 50):
     """Legge domande, testa pipeline, salva in CSV."""
 
     print(f"Lettura {input_file}...")
-    questions = read_dev_simple(input_file, max_questions)
-    print(f"Trovate {len(questions)} domande\n")
+    questions = read_dev_simple(input_file, to_row)
+    print(f"Trovate {to_row-from_row} domande\n")
 
     # Apri CSV per scrittura
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
@@ -100,8 +100,8 @@ def test_and_save_csv(input_file: str, output_csv: str, max_questions: int = 50)
         writer.writeheader()
 
         # Processa ogni domanda
-        for i, q in enumerate(questions, 1):
-            print(f"[{i}/{len(questions)}] {q['id']}")
+        for i, q in enumerate(questions[from_row:], 1):
+            print(f"[{i}/{to_row-from_row}] {q['id']}")
 
             # Esegui pipeline
             baseline, enriched = run_qa_pipeline(q['question'])
@@ -131,5 +131,6 @@ if __name__ == "__main__":
     test_and_save_csv(
         input_file="dev_simple.json",
         output_csv="results.csv",
-        max_questions=100  # Cambia qui il numero di domande
+        from_row=101,
+        to_row=200# Cambia qui il numero di domande
     )
