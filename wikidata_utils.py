@@ -127,6 +127,84 @@ def expand_with_wikidata_qids(qids: List[str],
         time.sleep(sleep_s)
     return all_edges
 
+
+def expand_multihop_wikidata(qids: List[str],
+                              prop_keys: Optional[List[str]] = None,
+                              prop_lang: str = "en",
+                              max_edges_per_qid: int = 8,
+                              preferred_only: bool = False,
+                              sleep_s: float = 0.1,
+                              max_hops: int = 2,
+                              max_new_entities: int = 20) -> List[tuple[str, str, str]]:
+    """
+    Multi-hop Wikidata expansion (CRITICAL for multi-hop QA).
+
+    Expands QIDs for multiple hops to discover intermediate entities.
+    For question "What college did the President who attended Minneapolis High School go to?":
+    - Hop 1: Minneapolis High School -> finds Hubert Humphrey (P69 educated at)
+    - Hop 2: Hubert Humphrey -> finds University of Minnesota (P69 educated at)
+
+    Args:
+        qids: Initial QIDs to expand
+        prop_keys: Property filters (e.g., ["educated at", "spouse"])
+        prop_lang: Language for property resolution
+        max_edges_per_qid: Max edges per entity
+        preferred_only: Only use preferred rank claims
+        sleep_s: Sleep between API calls
+        max_hops: Number of expansion hops (default 2)
+        max_new_entities: Max new entities to discover per hop
+
+    Returns:
+        All edges from all hops
+    """
+    all_edges: List[tuple[str, str, str]] = []
+    visited_qids = set(qids)  # Avoid cycles
+    current_frontier = list(qids)
+
+    print(f"[MULTIHOP] Starting {max_hops}-hop expansion from {len(qids)} initial QIDs")
+
+    for hop in range(max_hops):
+        if not current_frontier:
+            break
+
+        print(f"[MULTIHOP] Hop {hop + 1}: Expanding {len(current_frontier)} QIDs...")
+
+        hop_edges = []
+        next_frontier = []
+
+        for q in current_frontier:
+            try:
+                edges = wd_get_claims(
+                    q, prop_keys=prop_keys, lang=prop_lang,
+                    max_edges=max_edges_per_qid, preferred_only=preferred_only
+                )
+                hop_edges.extend(edges)
+
+                # Collect new QIDs for next hop
+                for _, _, tail_qid in edges:
+                    if tail_qid not in visited_qids:
+                        next_frontier.append(tail_qid)
+                        visited_qids.add(tail_qid)
+
+            except Exception as e:
+                print(f"[WARN] Failed to expand {q}: {e}")
+                pass
+
+            time.sleep(sleep_s)
+
+        all_edges.extend(hop_edges)
+        print(f"[MULTIHOP] Hop {hop + 1}: Found {len(hop_edges)} edges, {len(next_frontier)} new entities")
+
+        # Limit new entities to avoid explosion
+        if len(next_frontier) > max_new_entities:
+            print(f"[MULTIHOP] Limiting next frontier from {len(next_frontier)} to {max_new_entities}")
+            next_frontier = next_frontier[:max_new_entities]
+
+        current_frontier = next_frontier
+
+    print(f"[MULTIHOP] Total: {len(all_edges)} edges across {max_hops} hops")
+    return all_edges
+
 # --- DYNAMIC: property label cache (no PID families) ---
 _PID_LABEL_CACHE = {}
 

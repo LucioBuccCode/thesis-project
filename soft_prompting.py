@@ -246,7 +246,7 @@ def build_llm_prompt_with_graph(
 ) -> str:
     """
     Build a structured prompt combining question and graph facts.
-    Optimized for multi-hop reasoning.
+    Optimized for multi-hop reasoning with explicit bridging instructions.
 
     Args:
         question: The input question
@@ -256,26 +256,61 @@ def build_llm_prompt_with_graph(
     Returns:
         Formatted prompt
     """
+    # Detect if question likely requires multi-hop reasoning
+    multihop_indicators = [
+        "who attended", "who studied", "who graduated",
+        "that led", "that contains", "whose",
+        "of the", "did the", "the person who"
+    ]
+    is_multihop = any(indicator in question.lower() for indicator in multihop_indicators)
+
     if use_cot:
-        prompt = f"""You are an expert at answering complex questions using knowledge graphs.
+        if is_multihop:
+            # Enhanced prompt for multi-hop questions
+            prompt = f"""You are an expert at answering complex multi-hop questions using knowledge graphs.
 
 Knowledge Graph Facts:
 {graph_facts}
 
 Question: {question}
 
-Instructions:
-1. Read the question carefully and identify what information is needed
-2. Look through the knowledge graph facts for relevant information
-3. Connect multiple facts if needed to answer the question
-4. Provide a concise, direct answer
+This question requires MULTI-HOP REASONING. Follow these steps:
+
+Step 1 - IDENTIFY THE BRIDGE:
+- The question asks about something related to an intermediate entity
+- Find the intermediate entity first (e.g., "the President who attended X" → first find who that President is)
+
+Step 2 - CONNECT THE FACTS:
+- Use the facts to identify the intermediate entity
+- Then use facts about that entity to find the final answer
+
+Step 3 - PROVIDE THE ANSWER:
+- Give a direct, concise answer
+- Just the answer itself, no explanation
+
+Example:
+Question: "What college did the President who attended Minneapolis High School go to?"
+Step 1: Find which President attended Minneapolis High School → Hubert Humphrey
+Step 2: Find where Hubert Humphrey went to college → University of Minnesota
+Answer: University of Minnesota
+
+Now answer the question above:
+Answer:"""
+        else:
+            # Standard CoT prompt for single-hop questions
+            prompt = f"""You are an expert at answering questions using knowledge graphs.
+
+Knowledge Graph Facts:
+{graph_facts}
+
+Question: {question}
 
 Think step-by-step:
 1. What is being asked?
 2. Which facts are relevant?
-3. How do these facts connect?
-4. What is the final answer?
+3. What is the answer?
 
+Provide a concise, direct answer:
 Answer:"""
     else:
         prompt = f"""Answer the question using only the knowledge graph facts below.

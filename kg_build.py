@@ -5,7 +5,7 @@ import torch
 from torch_geometric.data import HeteroData
 from sentence_transformers import SentenceTransformer
 from wikidata_utils import (
-    wd_search_qid, wd_get_label_desc, expand_with_wikidata_qids
+    wd_search_qid, wd_get_label_desc, expand_with_wikidata_qids, expand_multihop_wikidata
 )
 
 
@@ -165,6 +165,9 @@ def build_enriched_hetero_graph(
         # enhanced entity linking:
         question_context: Optional[str] = None,
         use_reranking: bool = True,
+        # CRITICAL: Multi-hop expansion for discovering intermediate entities
+        use_multihop_expansion: bool = True,
+        max_hops: int = 2,
 ):
     """
     Costruisce un HeteroData con:
@@ -211,12 +214,29 @@ def build_enriched_hetero_graph(
         use_reranking=use_reranking
     )
 
-    # 3) espansione WD
+    # 3) espansione WD - CRITICAL: Use multi-hop expansion for multi-hop QA
     qids = [row["qid"] for row in e2q.values() if row and row.get("qid")]
-    q_edges = expand_with_wikidata_qids(qids,
-                                        prop_keys=wd_props, prop_lang=wd_lang,
-                                        max_edges_per_qid=wd_max_edges_per_qid,
-                                        preferred_only=wd_preferred_only)
+
+    if use_multihop_expansion:
+        print(f"[INFO] Using multi-hop expansion ({max_hops} hops) to discover intermediate entities")
+        q_edges = expand_multihop_wikidata(
+            qids,
+            prop_keys=wd_props,
+            prop_lang=wd_lang,
+            max_edges_per_qid=wd_max_edges_per_qid,
+            preferred_only=wd_preferred_only,
+            max_hops=max_hops,
+            max_new_entities=20  # Limit to avoid explosion
+        )
+    else:
+        print(f"[INFO] Using single-hop expansion")
+        q_edges = expand_with_wikidata_qids(
+            qids,
+            prop_keys=wd_props,
+            prop_lang=wd_lang,
+            max_edges_per_qid=wd_max_edges_per_qid,
+            preferred_only=wd_preferred_only
+        )
 
     # 4) lista completa di QID (seed + expansion)
     qids_all = sorted(set(qids + [h for (h,_,_) in q_edges] + [t for (_,_,t) in q_edges]))

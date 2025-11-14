@@ -215,6 +215,35 @@ def decompose_question(text: str) -> List[str]:
             sub_questions.append(f"What is {entity}?")
             sub_questions.append(f"{entity}")
 
+    # Pattern 7: "What X did Y who Z?" - CRITICAL for educational questions
+    # Example: "What college did the President who attended Minneapolis High School go to?"
+    pattern7 = r"what\s+(\w+)\s+did\s+(?:the\s+)?(\w+)\s+who\s+(.*?)\s+(?:go\s+to|attend|study|graduate)"
+    match7 = re.search(pattern7, text_lower)
+    if match7:
+        target = match7.group(1)  # "college"
+        role = match7.group(2)  # "president"
+        constraint = match7.group(3)  # "attended Minneapolis High School"
+
+        # Extract the intermediate entity
+        sub_questions.append(f"Which {role} {constraint}?")
+        sub_questions.append(f"Who {constraint}?")
+        # Extract the target information
+        sub_questions.append(f"What {target} did the {role} attend?")
+        sub_questions.append(f"{role} {constraint}")
+
+    # Pattern 8: Generic "What X did Y" for other educational/biographical questions
+    # Example: "What university did Barack Obama attend?"
+    pattern8 = r"what\s+(\w+)\s+did\s+([A-Z][a-z\s]+?)\s+(?:attend|study|graduate|go\s+to)"
+    match8 = re.search(pattern8, text)
+    if match8:
+        target = match8.group(1)  # "university"
+        person = match8.group(2).strip()  # "Barack Obama"
+
+        sub_questions.append(f"What is {person}?")
+        sub_questions.append(f"{person}")
+        sub_questions.append(f"{person} educated at")
+        sub_questions.append(f"Where did {person} study?")
+
     # Deduplicate while preserving order
     seen = set()
     unique_questions = []
